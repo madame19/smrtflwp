@@ -1,0 +1,616 @@
+#include <Wire.h>   
+
+ 
+
+#include <U8g2lib.h>   
+
+ 
+
+#include <Adafruit_Sensor.h>   
+
+ 
+
+#include <Adafruit_BME680.h>   
+
+ 
+
+#include <WiFi.h>   
+
+ 
+
+#include <NTPClient.h>   
+
+ 
+
+#include <WiFiUdp.h>   
+
+ 
+
+#include <TimeLib.h>   
+
+ 
+
+#include <Adafruit_NeoPixel.h>   
+
+ 
+
+#include <ThingSpeak.h> // Knihovna pro ThingSpeak   
+
+ 
+
+  
+
+ 
+
+// Nastavení pro WiFi   
+
+ 
+
+const char* ssid     = "Leona - iPhone";      // Zde zadej název své WiFi   
+
+ 
+
+const char* password = "kupsidata";    // Zadej heslo k WiFi   
+
+ 
+
+  
+
+ 
+
+// Nastavení pro OLED displej pomocí U8g2   
+
+ 
+
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE); // Nastavení pro 128x64 OLED s HW I2C   
+
+ 
+
+  
+
+ 
+
+// Nastavení pro BME680   
+
+ 
+
+Adafruit_BME680 bme;   
+
+ 
+
+  
+
+ 
+
+// Nastavení pro NTP klienta   
+
+ 
+
+WiFiUDP ntpUDP;   
+
+ 
+
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 3629, 60000); // 3600 sekund = UTC +1 hodina pro CET   
+
+ 
+
+  
+
+ 
+
+// Nastavení pro NeoPixel LED pásek   
+
+ 
+
+#define PIN            5    // Pin, na který je připojený data-in LED pásku (např. pin 5)   
+
+ 
+
+#define NUMPIXELS      8    // Počet LED na pásku   
+
+ 
+
+Adafruit_NeoPixel strip(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800); // Inicializace NeoPixel pásku   
+
+ 
+
+  
+
+ 
+
+// Nastavení pinu pro tlačítko   
+
+ 
+
+#define BUTTON_PIN     0    // Tlačítko připojeno na GPIO 0   
+
+ 
+
+  
+
+ 
+
+// Nastavení pinu pro senzor HW-038   
+
+ 
+
+#define WATER_SENSOR_PIN 4  // Pin pro připojení senzoru HW-038   
+
+ 
+
+  
+
+ 
+
+// Nastavení pinu pro čerpadlo   
+
+ 
+
+#define PUMP_PIN 17         // Pin pro připojení čerpadla   
+
+ 
+
+  
+
+ 
+
+// Nastavení pinu pro senzor vlhkosti půdy   
+
+ 
+
+#define SOIL_MOISTURE_PIN 34 // Pin pro připojení senzoru vlhkosti půdy   
+
+ 
+
+  
+
+ 
+
+bool waterDetected = true;  // Předpokládáme, že je voda na začátku (na základě logiky senzoru)   
+
+ 
+
+unsigned long lastSwitchTime = 0;  // Čas posledního přepnutí zobrazení   
+
+ 
+
+bool displayWarning = false;  // Flag pro střídání zobrazení   
+
+ 
+
+bool systemActive = false; // Flag pro aktivaci systému po stisknutí tlačítka   
+
+ 
+
+  
+
+ 
+
+// ThingSpeak API klíč a kanál ID   
+
+ 
+
+const char *thingSpeakAPIKey = "CRSCZVW9SI8W34V8";  // Změň na svůj API klíč   
+
+ 
+
+unsigned long channelID = 2828386; // Změň na své vlastní Channel ID   
+
+ 
+
+  
+
+ 
+
+WiFiClient client;   
+
+ 
+
+  
+
+ 
+
+void setup() {   
+
+ 
+
+  Serial.begin(115200);   
+
+ 
+
+  Wire.begin();   
+
+ 
+
+  
+
+ 
+
+  // Inicializace displeje   
+
+ 
+
+  u8g2.begin();   
+
+ 
+
+  
+
+ 
+
+  // Inicializace NeoPixel pásku   
+
+ 
+
+  strip.begin();   
+
+ 
+
+  strip.setBrightness(215); // Nastavení jasu na 50% (128 z 255)   
+
+ 
+
+  strip.show(); // Inicializuje pásky, nastaví je na "vypnuto"   
+
+ 
+
+  
+
+ 
+
+  // Nastavení tlačítka jako vstup   
+
+ 
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Vstupní pin s interním pull-up odporem   
+
+ 
+
+  pinMode(WATER_SENSOR_PIN, INPUT);   // Nastavení pinu pro senzor vody na vstup   
+
+ 
+
+  pinMode(PUMP_PIN, OUTPUT);          // Nastavení pinu pro čerpadlo jako výstup   
+
+ 
+
+  digitalWrite(PUMP_PIN, LOW);        // Vypnutí čerpadla na začátku   
+
+ 
+
+  
+
+ 
+
+  // Čekáme na stisknutí tlačítka, než spustíme zbytek programu   
+
+ 
+
+  while (digitalRead(BUTTON_PIN) == HIGH) {   
+
+ 
+
+    // Čekáme, dokud není tlačítko stisknuto   
+
+ 
+
+    u8g2.clearBuffer();   
+
+ 
+
+    u8g2.setFont(u8g2_font_ncenB08_tr);   
+
+ 
+
+    u8g2.setCursor(10, 30);   
+
+ 
+
+    u8g2.print("Stisknete tlacitko...");   
+
+ 
+
+    u8g2.sendBuffer();   
+
+ 
+
+    delay(100);   
+
+ 
+
+  }   
+
+ 
+
+  
+
+ 
+
+  // Jakmile je tlačítko stisknuto, systém se aktivuje   
+
+ 
+
+  systemActive = true;   
+
+ 
+
+  
+
+ 
+
+  // Připojení k WiFi   
+
+ 
+
+  WiFi.begin(ssid, password);   
+
+ 
+
+  while (WiFi.status() != WL_CONNECTED) {   
+
+ 
+
+    delay(1000);   
+
+ 
+
+    Serial.println("Pripojuji se k WiFi...");   
+
+ 
+
+  }   
+
+ 
+
+  Serial.println("Pripojeno k WiFi");   
+
+ 
+
+  
+
+ 
+
+  // Inicializace NTP klienta pro získání času   
+
+ 
+
+  timeClient.begin();   
+
+ 
+
+  
+
+ 
+
+  // Čekáme, než NTP získá čas   
+
+ 
+
+  while (!timeClient.update()) {   
+
+ 
+
+    Serial.println("čekám na aktualizaci času...");   
+
+ 
+
+    delay(1000);   
+
+ 
+
+  }   
+
+ 
+
+  
+
+ 
+
+  // Nastavení času pro TimeLib   
+
+ 
+
+  setTime(timeClient.getEpochTime()); // Nastavení času z NTP klienta   
+
+ 
+
+  
+
+ 
+
+  Serial.println("NTP synchronizováno!");   
+
+ 
+
+  
+
+ 
+
+  // Inicializace BME680   
+
+ 
+
+  if (!bme.begin()) {   
+
+ 
+
+    Serial.println("Nepodařilo se inicializovat BME680!");   
+
+ 
+
+    while (1);   
+
+ 
+
+  }   
+
+ 
+
+  
+
+ 
+
+  // Inicializace ThingSpeak   
+
+ 
+
+  ThingSpeak.begin(client);   
+
+ 
+
+}   
+
+ 
+
+  
+
+ 
+
+void loop() {   
+
+ 
+
+  // Pokud systém ještě není aktivní, nic neděláme   
+
+ 
+
+  if (!systemActive) {   
+
+ 
+
+    return;   
+
+ 
+
+  }   
+
+ 
+
+  
+
+ 
+
+  // Čteme stav senzoru HW-038 (detekce vody)   
+
+ 
+
+  waterDetected = (digitalRead(WATER_SENSOR_PIN) == LOW);  // Pokud je voda, senzor bude LOW, tzn. voda je přítomná   
+
+ 
+
+  
+
+ 
+
+  // Čteme hodnotu vlhkosti půdy   
+
+ 
+
+  int soilMoisture = analogRead(SOIL_MOISTURE_PIN);   
+
+ 
+
+  Serial.print("Vlhkost půdy: ");   
+
+ 
+
+  Serial.println(soilMoisture);  
+  // Pokud je vlhkost půdy větší než 2200 a je voda v zásobníku, spustíme čerpadlo   
+  if (soilMoisture > 2200 && !waterDetected) {   
+    digitalWrite(PUMP_PIN, HIGH); // Zapnutí čerpadla   
+    delay(8000); // Čerpadlo běží 8 sekund   
+    digitalWrite(PUMP_PIN, LOW);  // Vypnutí čerpadla   
+  }   
+  // Aktualizace času   
+  timeClient.update();   
+  // Pokud neni detekována voda, přepneme na režim varování   
+  if (waterDetected) {   
+    // Zobrazíme hlášení o došlé vodě   
+    u8g2.clearBuffer();   
+    u8g2.setFont(u8g2_font_ncenB08_tr);  // Používáme větší písmo pro varování   
+    u8g2.setCursor(2, 32);   
+    u8g2.print("Prazdny zasobnik vody!");   
+    // Zobrazení aktuálního času (v levém horním rohu)   
+    u8g2.setFont(u8g2_font_5x8_tr);  // Menší písmo pro čas   
+    u8g2.setCursor(2, 10);  // Levý horní roh   
+    u8g2.print(timeClient.getFormattedTime());   
+    // Zobrazení aktuálního data (v pravém horním rohu)   
+    u8g2.setCursor(90, 10); // Pravý horní roh   
+    u8g2.print(day());  // Den   
+    u8g2.print("/");   
+    u8g2.print(month()); // Měsíc   
+    u8g2.print("/");   
+    // Rok pouze poslední dvě číslice   
+    int yearShort = year() % 100;   
+    u8g2.print(yearShort);   
+    u8g2.sendBuffer();   
+    // LED pásek bude červený (varování)   
+    for (int i = 0; i < NUMPIXELS; i++) {   
+      strip.setPixelColor(i, strip.Color(255, 0, 0)); // Červená barva pro varování   
+    }   
+    strip.show();  // Aplikování změn na LED pásek   
+  } else {   
+    // Zobrazíme původní informace z BME680 a čas   
+    if (bme.performReading()) {   
+      // Čistíme displej před vykreslením nových dat   
+      u8g2.clearBuffer();   
+      // Zobrazení aktuálního času (v levém horním rohu)   
+      u8g2.setFont(u8g2_font_5x8_tr);  // Menší písmo pro čas   
+      u8g2.setCursor(2, 10);  // Levý horní roh   
+      u8g2.print(timeClient.getFormattedTime());   
+      // Zobrazení aktuálního data (v pravém horním rohu)   
+      u8g2.setCursor(90, 10); // Pravý horní roh   
+      u8g2.print(day());  // Den   
+      u8g2.print("/");   
+      u8g2.print(month()); // Měsíc   
+      u8g2.print("/");   
+      // Rok pouze poslední dvě číslice   
+      int yearShort = year() % 100;   
+      u8g2.print(yearShort);   
+      // Zobrazení údajů z BME680 (teplota, vlhkost, tlak, plyn)   
+      u8g2.setFont(u8g2_font_5x8_tr); // Používáme stejné písmo pro všechny hodnoty   
+      u8g2.setCursor(5, 30);  // Pro teplotu začneme trochu níž   
+      u8g2.print("Teplota vzduchu: ");   
+      u8g2.print(bme.temperature);   
+      u8g2.print(" C");   
+      u8g2.setCursor(5, 40);   
+      u8g2.print("Vlhkost vzduchu: ");   
+      u8g2.print(bme.humidity);   
+      u8g2.print(" %");   
+      u8g2.setCursor(5, 50);   
+      u8g2.print("Tlak: ");   
+      u8g2.print(bme.pressure / 100.0);   
+      u8g2.print(" hPa");   
+      u8g2.setCursor(5, 60);   
+      u8g2.print("Plyn: ");   
+      u8g2.print(bme.gas_resistance / 1000.0);   
+      u8g2.print(" kOhms");   
+      // Zobrazení nových dat na displeji   
+      u8g2.sendBuffer();   
+      // Odesílání dat na ThingSpeak   
+      ThingSpeak.setField(1, (float)bme.temperature);     // Pole 1 - teplota   
+      ThingSpeak.setField(2, (float)bme.humidity);        // Pole 2 - vlhkost   
+      ThingSpeak.setField(3, (float)(bme.pressure / 100.0)); // Pole 3 - tlak   
+      ThingSpeak.setField(4, (float)(bme.gas_resistance / 1000.0)); // Pole 4 - plyn (odpor)   
+      // Odeslání dat na ThingSpeak   
+      int status = ThingSpeak.writeFields(channelID, thingSpeakAPIKey);   
+      if (status == 200) {   
+        Serial.println("Data byla odeslána na ThingSpeak.");   
+      } else {   
+        Serial.println("Chyba při odesílání dat na ThingSpeak.");  
+      }   
+    } else {   
+      // Pokud se čtení nepodařilo, zobrazíme chybu   
+      u8g2.clearBuffer();   
+      u8g2.setCursor(0, 10);   
+      u8g2.print("Chyba pri cteni!");   
+      u8g2.sendBuffer();   
+    }   
+    // LED pásek bude bílý (normální stav)   
+    for (int i = 0; i < NUMPIXELS; i++) {   
+      strip.setPixelColor(i, strip.Color(255, 255, 255)); // Bílá barva (plný jas pro R, G, B)   
+    }   
+    strip.show();  // Aplikování změn na LED pásek   
+  }   
+  delay(300000);  // Pošle data každých 5 minut  
+} 
