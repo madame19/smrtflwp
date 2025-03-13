@@ -11,8 +11,8 @@
 
 // Nastavení pro WiFi   
 
-const char* ssid     = "Leona - iPhone";      // nastaveni wifi  
-const char* password = "kupsidata";    
+const char* ssid     = "******";      // nastaveni wifi  
+const char* password = "*******";    
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE); // Nastavení pro display s HW I2C   
 
@@ -41,8 +41,8 @@ unsigned long lastSwitchTime = 0;  // Čas posledního přepnutí zobrazení
 bool displayWarning = false;  // promena pro střídání zobrazení   
 bool systemActive = false; // promena pro aktivaci systému po stisknutí tlačítka   
    
-const char *thingSpeakAPIKey = "CRSCZVW9SI8W34V8";  //API klíč   
-unsigned long channelID = 2828386; //Channel ID  
+const char *thingSpeakAPIKey = "*******";  //API klíč   
+unsigned long channelID = ********; //Channel ID  
 
 WiFiClient client;   
 void setup() {   
